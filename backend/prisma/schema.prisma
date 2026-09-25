@@ -139,6 +139,12 @@ enum OpportunityEligibilityType {
   OTHER
 }
 
+enum OpportunityFitCategory {
+  READY_NOW
+  STRETCH
+  FUTURE
+}
+
 // ---------------- Models ----------------
 
 // Root of the student profile system.
@@ -163,6 +169,7 @@ model Student {
   projects                Project[]
   opportunityBookmarks    StudentOpportunityBookmark[]
   opportunityApplications StudentOpportunityApplication[]
+  evaluations             StudentOpportunityEvaluation[]
 }
 
 // One education entry per row (Class X, Class XII, B.Tech, ...).
@@ -309,6 +316,7 @@ model Opportunity {
   studentApplications     StudentOpportunityApplication[]
   cycles                  OpportunityCycle[]
   eligibilityRequirements OpportunityEligibility[]
+  evaluations             StudentOpportunityEvaluation[]
 
   @@index([type])
   @@index([isActive])
@@ -492,4 +500,31 @@ model OpportunityEligibility {
 
   @@index([opportunityId])
   @@index([type])
+}
+
+// ---------------- Opportunity Match Foundation ----------------
+
+// Represents the evaluation of a student's fit for a specific opportunity
+model StudentOpportunityEvaluation {
+  id                     Int                    @id @default(autoincrement())
+  studentId              Int
+  opportunityId          Int
+  evaluatedAt            DateTime               @default(now())
+  eligibilityPassed      Boolean
+  requiredSkillsMatched  Int                    @default(0)
+  requiredSkillsTotal    Int                    @default(0)
+  preferredSkillsMatched Int                    @default(0)
+  preferredSkillsTotal   Int                    @default(0)
+  fitCategory            OpportunityFitCategory
+  explanation            String?
+  createdAt              DateTime               @default(now())
+  updatedAt              DateTime               @updatedAt
+
+  student     Student     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+  @@index([opportunityId])
+  @@index([fitCategory])
+  @@index([evaluatedAt])
 }
