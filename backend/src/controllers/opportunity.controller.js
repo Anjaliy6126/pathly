@@ -6,29 +6,198 @@ const prisma = new PrismaClient();
 
 export const getOpportunities = async (req, res) => {
   try {
-    const { type, workMode, location, organization } = req.query;
+    const {
+      keyword,
+      type,
+      workMode,
+      location,
+      organization,
+      skill,
+      requiredSkill,
+      preferredSkill,
+      deadlineFrom,
+      deadlineTo,
+      status,
+      verificationStatus,
+      page = 1,
+      limit = 20
+    } = req.query;
+
+    const pageNum = parseInt(page, 10);
+    const limitNum = parseInt(limit, 10);
+
+    if (isNaN(pageNum) || pageNum <= 0) return res.status(400).json({ success: false, error: 'Invalid page' });
+    if (isNaN(limitNum) || limitNum <= 0) return res.status(400).json({ success: false, error: 'Invalid limit' });
+    const maxLimit = Math.min(limitNum, 100);
+    const skip = (pageNum - 1) * maxLimit;
+
     const filters = { isActive: true };
 
-    if (type) filters.type = type;
-    if (workMode) filters.workMode = workMode;
-    if (location) filters.location = { contains: location, mode: 'insensitive' };
-    if (organization) filters.organization = { contains: organization, mode: 'insensitive' };
+    if (keyword) {
+      filters.OR = [
+        { title: { contains: keyword, mode: 'insensitive' } },
+        { organization: { contains: keyword, mode: 'insensitive' } },
+        { description: { contains: keyword, mode: 'insensitive' } }
+      ];
+    }
 
+    const validTypes = ['INTERNSHIP', 'JOB', 'HACKATHON', 'SCHOLARSHIP', 'COMPETITION', 'OPEN_SOURCE', 'OTHER'];
+    if (type) {
+      if (!validTypes.includes(type)) return res.status(400).json({ success: false, error: 'Invalid type' });
+      filters.type = type;
+    }
+
+    if (workMode) {
+      if (!['REMOTE', 'ONSITE', 'HYBRID'].includes(workMode)) return res.status(400).json({ success: false, error: 'Invalid workMode' });
+      filters.workMode = workMode;
+    }
+
+    if (location) {
+      filters.location = { contains: location, mode: 'insensitive' };
+    }
+
+    if (organization) {
+      filters.organization = { contains: organization, mode: 'insensitive' };
+    }
+
+    const skillFilters = [];
+    if (skill) {
+      skillFilters.push({ skills: { some: { skill: { name: { equals: skill, mode: 'insensitive' } } } } });
+    }
+    if (requiredSkill) {
+      skillFilters.push({ skills: { some: { isRequired: true, skill: { name: { equals: requiredSkill, mode: 'insensitive' } } } } });
+    }
+    if (preferredSkill) {
+      skillFilters.push({ skills: { some: { isRequired: false, skill: { name: { equals: preferredSkill, mode: 'insensitive' } } } } });
+    }
+    if (skillFilters.length > 0) {
+      filters.AND = filters.AND || [];
+      filters.AND.push(...skillFilters);
+    }
+
+    const validStatuses = ['OPEN', 'UPCOMING', 'CLOSED', 'CANCELLED', 'UNKNOWN'];
+    if (status) {
+      if (!validStatuses.includes(status)) return res.status(400).json({ success: false, error: 'Invalid status' });
+    }
+
+    let parsedDeadlineFrom = null;
+    let parsedDeadlineTo = null;
+    if (deadlineFrom) {
+      parsedDeadlineFrom = new Date(deadlineFrom);
+      if (isNaN(parsedDeadlineFrom.getTime())) return res.status(400).json({ success: false, error: 'Invalid deadlineFrom date format' });
+    }
+    if (deadlineTo) {
+      parsedDeadlineTo = new Date(deadlineTo);
+      if (isNaN(parsedDeadlineTo.getTime())) return res.status(400).json({ success: false, error: 'Invalid deadlineTo date format' });
+    }
+
+    if (status || parsedDeadlineFrom || parsedDeadlineTo) {
+      const cycleCondition = {};
+      if (status) cycleCondition.status = status;
+      if (parsedDeadlineFrom || parsedDeadlineTo) {
+        cycleCondition.applicationDeadline = {};
+        if (parsedDeadlineFrom) cycleCondition.applicationDeadline.gte = parsedDeadlineFrom;
+        if (parsedDeadlineTo) cycleCondition.applicationDeadline.lte = parsedDeadlineTo;
+      }
+      filters.cycles = { some: cycleCondition };
+    }
+
+    const validVerifications = ['VERIFIED', 'FAILED', 'NEEDS_REVIEW'];
+    if (verificationStatus) {
+      if (!validVerifications.includes(verificationStatus)) return res.status(400).json({ success: false, error: 'Invalid verificationStatus' });
+      
+      const oppsWithVerifications = await prisma.opportunity.findMany({
+        where: { isActive: true },
+        select: {
+          id: true,
+          verifications: {
+            orderBy: [{ verifiedAt: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
+            take: 1
+          }
+        }
+      });
+      
+      const matchingOppIds = oppsWithVerifications
+        .filter(opp => opp.verifications.length > 0 && opp.verifications[0].status === verificationStatus)
+        .map(opp => opp.id);
+        
+      if (matchingOppIds.length === 0) {
+         return res.status(200).json({
+            success: true,
+            data: { opportunities: [], pagination: { page: pageNum, limit: maxLimit, total: 0, totalPages: 0 } }
+         });
+      }
+      
+      filters.id = { in: matchingOppIds };
+    }
+
+    // Sorting: Complex sorting by cycle status/deadline across a 1-to-Many relation
+    // is difficult in Prisma without raw queries. 
+    // We fall back to a simple, deterministic database-compatible ordering (id desc).
     const opportunities = await prisma.opportunity.findMany({
       where: filters,
+      skip,
+      take: maxLimit,
       include: {
         skills: {
           include: { skill: true }
         },
         eligibilityRequirements: true,
-        cycles: {
-          orderBy: { startDate: 'desc' },
+        cycles: true,
+        verifications: {
+          orderBy: [{ verifiedAt: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
           take: 1
+        }
+      },
+      orderBy: { id: 'desc' }
+    });
+
+    const total = await prisma.opportunity.count({ where: filters });
+    const totalPages = Math.ceil(total / maxLimit);
+
+    const mappedOpportunities = opportunities.map(opp => {
+      const currentVerificationStatus = opp.verifications.length > 0 ? opp.verifications[0].status : null;
+      
+      let currentCycle = null;
+      if (opp.cycles.length > 0) {
+        // Selection logic: Prefer OPEN, then UPCOMING, else most recent
+        const openCycle = opp.cycles.find(c => c.status === 'OPEN');
+        const upcomingCycle = opp.cycles.find(c => c.status === 'UPCOMING');
+        
+        if (openCycle) {
+          currentCycle = openCycle;
+        } else if (upcomingCycle) {
+          currentCycle = upcomingCycle;
+        } else {
+          currentCycle = opp.cycles.sort((a, b) => {
+            const dateA = a.applicationDeadline || a.startDate || a.createdAt;
+            const dateB = b.applicationDeadline || b.startDate || b.createdAt;
+            return new Date(dateB) - new Date(dateA);
+          })[0];
+        }
+      }
+
+      const { cycles, verifications, ...cleanOpp } = opp;
+      
+      return {
+        ...cleanOpp,
+        currentCycle,
+        verificationStatus: currentVerificationStatus
+      };
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        opportunities: mappedOpportunities,
+        pagination: {
+          page: pageNum,
+          limit: maxLimit,
+          total,
+          totalPages
         }
       }
     });
-
-    res.status(200).json({ success: true, data: opportunities });
   } catch (error) {
     console.error('Get opportunities error:', error);
     res.status(500).json({ success: false, error: 'Internal server error' });
