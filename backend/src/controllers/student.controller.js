@@ -162,3 +162,108 @@ export const updateStudent = async (req, res) => {
     return res.status(500).json({ success: false, message: "Failed to update student." });
   }
 };
+
+export const getCapabilityProfile = async (req, res) => {
+  try {
+    const { studentId } = req.params;
+    const sId = parseInt(studentId, 10);
+
+    const student = await prisma.student.findUnique({
+      where: { id: sId },
+      include: {
+        educations: {
+          orderBy: { endYear: 'desc' }
+        },
+        goals: {
+          include: { goal: true }
+        },
+        skills: {
+          include: {
+            skill: true,
+            evidences: true
+          }
+        },
+        projects: {
+          include: {
+            skills: {
+              include: { skill: true }
+            }
+          }
+        }
+      }
+    });
+
+    if (!student) {
+      return res.status(404).json({ success: false, message: "Student not found." });
+    }
+
+    const { passwordHash, educations, goals, skills, projects, ...studentSummary } = student;
+
+    let skillsWithEvidence = 0;
+    let evidenceCount = 0;
+    const evidenceByType = {};
+    const skillsByCategory = {};
+
+    skills.forEach(studentSkill => {
+      if (studentSkill.skill) {
+        skillsByCategory[studentSkill.skill.category] = (skillsByCategory[studentSkill.skill.category] || 0) + 1;
+      }
+      if (studentSkill.evidences && studentSkill.evidences.length > 0) {
+        skillsWithEvidence++;
+        evidenceCount += studentSkill.evidences.length;
+        studentSkill.evidences.forEach(ev => {
+          evidenceByType[ev.evidenceType] = (evidenceByType[ev.evidenceType] || 0) + 1;
+        });
+      }
+    });
+
+    const completedProjectCount = projects.filter(p => p.status === 'COMPLETED').length;
+
+    const summary = {
+      skillCount: skills.length,
+      skillsWithEvidence,
+      evidenceCount,
+      projectCount: projects.length,
+      completedProjectCount,
+      educationRecordCount: educations.length,
+      goalCount: goals.length
+    };
+
+    const mappedSkills = skills.map(ss => ({
+      studentSkillId: ss.id,
+      skill: ss.skill,
+      source: ss.source,
+      note: ss.note,
+      evidence: ss.evidences
+    }));
+
+    const mappedProjects = projects.map(p => ({
+      ...p,
+      skills: p.skills.map(ps => ps.skill)
+    }));
+
+    const mappedGoals = goals.map(sg => ({
+      id: sg.goalId,
+      name: sg.goal ? sg.goal.name : 'Unknown',
+      note: sg.note
+    }));
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        student: studentSummary,
+        education: educations,
+        goals: mappedGoals,
+        skills: mappedSkills,
+        projects: mappedProjects,
+        summary,
+        evidenceByType,
+        skillsByCategory
+      }
+    });
+
+  } catch (error) {
+    console.error("Error getting capability profile:", error);
+    return res.status(500).json({ success: false, message: "Failed to get capability profile." });
+  }
+};

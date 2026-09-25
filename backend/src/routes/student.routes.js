@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { createStudent, getStudent, updateStudent } from '../controllers/student.controller.js';
+import { createStudent, getStudent, updateStudent, getCapabilityProfile } from '../controllers/student.controller.js';
 import {
   createBookmark,
   deleteBookmark,
@@ -34,5 +34,6 @@ router.patch('/:studentId/applications/:applicationId', authenticate, requireOwn
 router.delete('/:studentId/applications/:applicationId', authenticate, requireOwnership, deleteApplication);
 
 router.get('/:studentId/matching/opportunities', authenticate, requireOwnership, getStudentMatchedOpportunities);
+router.get('/:studentId/capability-profile', authenticate, requireOwnership, getCapabilityProfile);
 
 export default router;
