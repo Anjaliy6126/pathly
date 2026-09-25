@@ -1,0 +1,495 @@
+// Pathly — Prisma schema.
+// Part 1: Student Profile System.
+// Part 2: Opportunity System (opportunities + their skill requirements).
+// Part 3: Opportunity Source & Verification System.
+// Part 4: Student Skill Evidence System.
+// Part 5: Student Opportunity Tracking System (bookmarks + applications).
+// Later parts (matching, capability analysis) will be added in future migrations.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------- Enums ----------------
+
+// Category of a skill in the master Skill table.
+// OTHER exists so new/unusual skills can still be added without a migration.
+enum SkillCategory {
+  LANGUAGE
+  FRONTEND
+  BACKEND
+  DATABASE
+  DEVOPS
+  TOOLS
+  CONCEPT
+  OTHER
+}
+
+// Where a student's skill claim comes from.
+// This is the beginning of Pathly's evidence-based capability system.
+enum SkillSource {
+  COURSEWORK
+  PROJECT
+  INTERNSHIP
+  CERTIFICATION
+  SELF_STUDY
+  OTHER
+}
+
+// What kind of artifact supports a student-skill claim.
+// GITHUB_REPOSITORY / LEETCODE / LINKEDIN are evidence TYPES only —
+// no platform integrations exist at this stage.
+enum SkillEvidenceType {
+  PROJECT
+  GITHUB_REPOSITORY
+  PORTFOLIO
+  INTERNSHIP
+  CERTIFICATION
+  COURSE
+  LEETCODE
+  LINKEDIN
+  OTHER
+}
+
+// Lifecycle state of a student project.
+enum ProjectStatus {
+  ONGOING
+  COMPLETED
+  PAUSED
+}
+
+// Kind of opportunity (internship, job, hackathon, ...).
+// OTHER keeps the schema flexible for future types.
+enum OpportunityType {
+  INTERNSHIP
+  JOB
+  HACKATHON
+  SCHOLARSHIP
+  COMPETITION
+  OPEN_SOURCE
+  OTHER
+}
+
+// Where the work happens. Nullable = not specified.
+enum WorkMode {
+  REMOTE
+  ONSITE
+  HYBRID
+}
+
+// Kind of organization a piece of opportunity information came from.
+// The enum replaces what would otherwise be several near-identical tables.
+enum OpportunitySourceType {
+  COMPANY
+  GOVERNMENT
+  UNIVERSITY
+  HACKATHON_PLATFORM
+  NONPROFIT
+  ORGANIZATION
+  ADMIN
+  OTHER
+}
+
+// Outcome of one verification event against a source.
+enum OpportunityVerificationStatus {
+  VERIFIED
+  FAILED
+  NEEDS_REVIEW
+}
+
+// Student's progress in tracking one opportunity application.
+// Main flow: SAVED -> APPLIED -> SHORTLISTED -> SELECTED.
+// Side paths: APPLIED/SHORTLISTED -> REJECTED or WITHDRAWN.
+enum ApplicationStatus {
+  SAVED
+  APPLIED
+  SHORTLISTED
+  REJECTED
+  SELECTED
+  WITHDRAWN
+}
+
+enum OpportunityCycleStatus {
+  UPCOMING
+  OPEN
+  CLOSED
+  CANCELLED
+  UNKNOWN
+}
+
+enum OpportunityCycleVerificationStatus {
+  VERIFIED
+  FAILED
+  NEEDS_REVIEW
+}
+
+enum OpportunityEligibilityType {
+  DEGREE
+  BRANCH
+  MIN_YEAR
+  MAX_YEAR
+  MIN_CGPA
+  GRADUATION_YEAR
+  LOCATION
+  OTHER
+}
+
+// ---------------- Models ----------------
+
+// Root of the student profile system.
+// Authentication will be added later; passwordHash is stored now
+// so plain-text passwords are never an option.
+model Student {
+  id           Int      @id @default(autoincrement())
+  fullName     String
+  email        String   @unique
+  passwordHash String
+  collegeName  String?
+  branch       String?
+  currentYear  Int?
+  cgpa         Decimal? @db.Decimal(4, 2)
+  city         String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  educations              Education[]
+  goals                   StudentGoal[]
+  skills                  StudentSkill[]
+  projects                Project[]
+  opportunityBookmarks    StudentOpportunityBookmark[]
+  opportunityApplications StudentOpportunityApplication[]
+}
+
+// One education entry per row (Class X, Class XII, B.Tech, ...).
+// One-to-many: a student can have several of these over time.
+model Education {
+  id           Int      @id @default(autoincrement())
+  studentId    Int
+  degree       String
+  institution  String
+  fieldOfStudy String?
+  startYear    Int
+  endYear      Int? // nullable = ongoing education
+  cgpa         Decimal? @db.Decimal(4, 2)
+  percentage   Decimal? @db.Decimal(5, 2) // only one of cgpa / percentage is used
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+}
+
+// Master table of career goals (Placement, GATE, Open Source, ...).
+// Exists independently of students so goals are not duplicated or misspelled.
+model Goal {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  students StudentGoal[]
+}
+
+// Junction: Student ↔ Goal (many-to-many).
+// Lets a student have multiple goals without cramming them into one field.
+model StudentGoal {
+  id        Int      @id @default(autoincrement())
+  studentId Int
+  goalId    Int
+  note      String? // optional personal note about this goal
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  goal    Goal    @relation(fields: [goalId], references: [id], onDelete: Restrict)
+
+  @@unique([studentId, goalId]) // a student cannot add the same goal twice
+  @@index([goalId])
+}
+
+// Master table of skills/technologies (JavaScript, React, Docker, ...).
+// Shared by StudentSkill and ProjectSkill — one source of truth.
+model Skill {
+  id        Int           @id @default(autoincrement())
+  name      String        @unique
+  category  SkillCategory @default(OTHER)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  students          StudentSkill[]
+  projects          ProjectSkill[]
+  opportunitySkills OpportunitySkill[]
+}
+
+// Junction: Student ↔ Skill (many-to-many).
+// No fake 1-100 score — Pathly will use evidence-based capability data later.
+model StudentSkill {
+  id        Int          @id @default(autoincrement())
+  studentId Int
+  skillId   Int
+  source    SkillSource? // where this skill claim comes from
+  note      String?
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  skill   Skill   @relation(fields: [skillId], references: [id], onDelete: Restrict)
+
+  evidences StudentSkillEvidence[]
+
+  @@unique([studentId, skillId]) // a student cannot list the same skill twice
+  @@index([skillId])
+}
+
+// One project per row. GitHub / live URLs are optional because
+// not every project is hosted publicly.
+model Project {
+  id          Int           @id @default(autoincrement())
+  studentId   Int
+  title       String
+  description String?
+  githubUrl   String?
+  liveUrl     String?
+  status      ProjectStatus @default(ONGOING)
+  startDate   DateTime?     @db.Date
+  endDate     DateTime?     @db.Date
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  student Student        @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  skills  ProjectSkill[]
+
+  @@index([studentId])
+}
+
+// Junction: Project ↔ Skill (many-to-many).
+// Reuses the Skill master table instead of a duplicate "technology" table.
+model ProjectSkill {
+  id        Int      @id @default(autoincrement())
+  projectId Int
+  skillId   Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  skill   Skill   @relation(fields: [skillId], references: [id], onDelete: Restrict)
+
+  @@unique([projectId, skillId]) // the same technology cannot be attached twice
+  @@index([skillId])
+}
+
+// One opportunity per row (internship, job, hackathon, ...).
+// Skills required for this opportunity live in OpportunitySkill,
+// so they stay relational and can be matched against student skills.
+model Opportunity {
+  id           Int             @id @default(autoincrement())
+  title        String
+  organization String
+  description  String?
+  type         OpportunityType @default(OTHER)
+  workMode     WorkMode?
+  location     String? // city / country; null = not specified
+  stipendMin   Int? // in INR per month, null = unpaid / not specified
+  stipendMax   Int?
+  applyUrl     String?
+  deadline     DateTime?       @db.Date
+  isActive     Boolean         @default(true) // soft "hidden" flag instead of hard delete
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  skills                  OpportunitySkill[]
+  verifications           OpportunityVerification[]
+  studentBookmarks        StudentOpportunityBookmark[]
+  studentApplications     StudentOpportunityApplication[]
+  cycles                  OpportunityCycle[]
+  eligibilityRequirements OpportunityEligibility[]
+
+  @@index([type])
+  @@index([isActive])
+}
+
+// Junction: Opportunity ↔ Skill (many-to-many required skills).
+// minimumLevel is a simple 1-5 demand scale for now; matching against
+// evidence-based student capability data comes in a later part.
+model OpportunitySkill {
+  id            Int     @id @default(autoincrement())
+  opportunityId Int
+  skillId       Int
+  minimumLevel  Int     @default(1) // 1-5 demand scale
+  isRequired    Boolean @default(true) // false = nice-to-have
+
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  skill       Skill       @relation(fields: [skillId], references: [id], onDelete: Restrict)
+
+  @@unique([opportunityId, skillId]) // the same skill cannot be required twice
+  @@index([skillId])
+}
+
+// ---------------- Opportunity Source & Verification System ----------------
+
+// A source from which Pathly obtained or verified opportunity information
+// (e.g. "Google Careers" with url = careers page, sourceType = COMPANY).
+// Note: OpportunitySource.url is the SOURCE page (where info came from),
+// NOT Opportunity.applyUrl (where the student applies). Different things.
+model OpportunitySource {
+  id         Int                   @id @default(autoincrement())
+  name       String                @unique // canonical source name, no duplicates like "Google" vs "Google Careers"
+  url        String?
+  sourceType OpportunitySourceType @default(OTHER)
+  isOfficial Boolean               @default(false)
+  createdAt  DateTime              @default(now())
+  updatedAt  DateTime              @updatedAt
+
+  verifications OpportunityVerification[]
+
+  @@index([sourceType]) // supports "list all HACKATHON_PLATFORM sources" style filters
+}
+
+// One verification event for one opportunity. Append-only history:
+// rows are never updated (no updatedAt), so old records are never overwritten
+// and the full verification timeline of an opportunity is preserved.
+model OpportunityVerification {
+  id            Int                           @id @default(autoincrement())
+  opportunityId Int
+  sourceId      Int
+  status        OpportunityVerificationStatus
+  verifiedAt    DateTime                      @default(now())
+  verifiedBy    String // simple text for now ("Admin", "System"); no auth system yet
+  notes         String?
+  createdAt     DateTime                      @default(now())
+
+  opportunity Opportunity       @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  source      OpportunitySource @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+
+  @@index([opportunityId, verifiedAt]) // serves "all verifications of an opportunity" AND "latest verification"
+  @@index([sourceId]) // serves "all opportunities verified from a specific source"
+  @@index([status]) // borderline today (few distinct values), pays off once verification volume grows
+}
+
+// ---------------- Student Skill Evidence System ----------------
+
+// One piece of evidence supporting one student-skill claim.
+// Answers: "Why does Pathly believe this student has this skill?"
+// One generic table with an evidenceType enum instead of separate
+// GitHub/LeetCode/LinkedIn evidence tables — they are all just evidence.
+model StudentSkillEvidence {
+  id             Int               @id @default(autoincrement())
+  studentSkillId Int
+  evidenceType   SkillEvidenceType
+  title          String // human-readable name, e.g. "Pathly Repository"
+  description    String? // what this evidence demonstrates
+  url            String? // optional: some evidence has no public URL
+  evidenceDate   DateTime?         @db.Date // optional: completion / issue / internship date
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  studentSkill StudentSkill @relation(fields: [studentSkillId], references: [id], onDelete: Cascade)
+
+  @@index([studentSkillId]) // serves "get all evidence for this skill claim"
+}
+
+// ---------------- Student Opportunity Tracking System ----------------
+
+// One bookmark: "Student 1 saved Opportunity 2 for later."
+// Deliberately SEPARATE from StudentOpportunityApplication — bookmarking
+// does NOT create an application row; applying is its own explicit action.
+model StudentOpportunityBookmark {
+  id            Int      @id @default(autoincrement())
+  studentId     Int
+  opportunityId Int
+  createdAt     DateTime @default(now())
+
+  student     Student     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, opportunityId]) // a student cannot bookmark the same opportunity twice
+  @@index([opportunityId])
+}
+
+// One tracked application: "Student 1 applied to Opportunity 2, now SHORTLISTED."
+// Created only when the student actually applies (status APPLIED) or explicitly
+// saves a draft (status SAVED) — never as a side effect of bookmarking.
+// Status transition validation is application logic, to be added later.
+model StudentOpportunityApplication {
+  id            Int               @id @default(autoincrement())
+  studentId     Int
+  opportunityId Int
+  status        ApplicationStatus @default(SAVED)
+  appliedAt     DateTime? // set when status moves to APPLIED
+  notes         String?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  student     Student     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, opportunityId]) // one tracking record per student-opportunity pair
+  @@index([opportunityId])
+  @@index([status])
+}
+
+// ---------------- Opportunity Cycle System ----------------
+
+// A specific application/recruitment cycle of an opportunity
+model OpportunityCycle {
+  id                  Int                    @id @default(autoincrement())
+  opportunityId       Int
+  cycleLabel          String
+  applicationStart    DateTime?              @db.Date
+  applicationDeadline DateTime?              @db.Date
+  startDate           DateTime?              @db.Date
+  endDate             DateTime?              @db.Date
+  status              OpportunityCycleStatus @default(UNKNOWN)
+  applicationUrl      String?
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+
+  opportunity   Opportunity                    @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  verifications OpportunityCycleVerification[]
+
+  @@unique([opportunityId, cycleLabel])
+  @@index([opportunityId])
+  @@index([status])
+  @@index([applicationDeadline])
+}
+
+// Verification events for a specific opportunity cycle
+model OpportunityCycleVerification {
+  id                 Int                                @id @default(autoincrement())
+  opportunityCycleId Int
+  status             OpportunityCycleVerificationStatus
+  verifiedAt         DateTime                           @default(now())
+  verifiedBy         String
+  notes              String?
+  createdAt          DateTime                           @default(now())
+
+  opportunityCycle OpportunityCycle @relation(fields: [opportunityCycleId], references: [id], onDelete: Cascade)
+
+  @@index([opportunityCycleId])
+  @@index([status])
+  @@index([verifiedAt])
+}
+
+// ---------------- Opportunity Eligibility System ----------------
+
+// A specific requirement attached to an opportunity
+model OpportunityEligibility {
+  id            Int                        @id @default(autoincrement())
+  opportunityId Int
+  type          OpportunityEligibilityType
+  value         String
+  description   String?
+  createdAt     DateTime                   @default(now())
+  updatedAt     DateTime                   @updatedAt
+
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+
+  @@index([opportunityId])
+  @@index([type])
+}
