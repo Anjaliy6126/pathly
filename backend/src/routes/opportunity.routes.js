@@ -12,7 +12,15 @@ import {
   getEligibilityRequirements,
   addEligibilityRequirement,
   updateEligibilityRequirement,
-  deleteEligibilityRequirement
+  deleteEligibilityRequirement,
+  getOpportunityCycles,
+  getOpportunityCycle,
+  createOpportunityCycle,
+  updateOpportunityCycle,
+  deleteOpportunityCycle,
+  getCycleVerifications,
+  addCycleVerification,
+  getLatestCycleVerification
 } from '../controllers/opportunity.controller.js';
 
 const router = Router();
@@ -35,5 +43,17 @@ router.get('/:opportunityId/eligibility', getEligibilityRequirements);
 router.post('/:opportunityId/eligibility', addEligibilityRequirement);
 router.patch('/:opportunityId/eligibility/:eligibilityId', updateEligibilityRequirement);
 router.delete('/:opportunityId/eligibility/:eligibilityId', deleteEligibilityRequirement);
+
+// --- Opportunity Cycles ---
+router.get('/:opportunityId/cycles', getOpportunityCycles);
+router.get('/:opportunityId/cycles/:cycleId', getOpportunityCycle);
+router.post('/:opportunityId/cycles', createOpportunityCycle);
+router.patch('/:opportunityId/cycles/:cycleId', updateOpportunityCycle);
+router.delete('/:opportunityId/cycles/:cycleId', deleteOpportunityCycle);
+
+// --- Opportunity Cycle Verifications ---
+router.get('/:opportunityId/cycles/:cycleId/verifications', getCycleVerifications);
+router.post('/:opportunityId/cycles/:cycleId/verifications', addCycleVerification);
+router.get('/:opportunityId/cycles/:cycleId/verification', getLatestCycleVerification);
 
 export default router;

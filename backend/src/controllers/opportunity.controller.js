@@ -422,3 +422,326 @@ export const deleteEligibilityRequirement = async (req, res) => {
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
 };
+
+// ================= OPPORTUNITY CYCLES =================
+
+export const getOpportunityCycles = async (req, res) => {
+  try {
+    const { opportunityId } = req.params;
+    const opportunity = await prisma.opportunity.findUnique({ where: { id: Number(opportunityId) } });
+    if (!opportunity) return res.status(404).json({ success: false, error: 'Opportunity not found' });
+
+    const cycles = await prisma.opportunityCycle.findMany({
+      where: { opportunityId: Number(opportunityId) },
+      orderBy: [
+        { applicationDeadline: 'desc' },
+        { cycleLabel: 'desc' }
+      ]
+    });
+
+    res.status(200).json({ success: true, data: cycles });
+  } catch (error) {
+    console.error('Get cycles error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+};
+
+export const getOpportunityCycle = async (req, res) => {
+  try {
+    const { opportunityId, cycleId } = req.params;
+
+    const cycle = await prisma.opportunityCycle.findUnique({ where: { id: Number(cycleId) } });
+    if (!cycle || cycle.opportunityId !== Number(opportunityId)) {
+      return res.status(404).json({ success: false, error: 'Cycle not found for this opportunity' });
+    }
+
+    res.status(200).json({ success: true, data: cycle });
+  } catch (error) {
+    console.error('Get cycle error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+};
+
+export const createOpportunityCycle = async (req, res) => {
+  try {
+    const { opportunityId } = req.params;
+    const { cycleLabel, applicationStart, applicationDeadline, startDate, endDate, status, applicationUrl } = req.body;
+
+    if (!cycleLabel || cycleLabel.trim() === '') {
+      return res.status(400).json({ success: false, error: 'cycleLabel is required' });
+    }
+
+    const validStatuses = ['UPCOMING', 'OPEN', 'CLOSED', 'CANCELLED', 'UNKNOWN'];
+    if (status && !validStatuses.includes(status)) {
+      return res.status(400).json({ success: false, error: 'Invalid status' });
+    }
+
+    if (applicationUrl && !isValidUrl(applicationUrl)) {
+      return res.status(400).json({ success: false, error: 'Invalid applicationUrl format' });
+    }
+
+    let parsedAppStart = null;
+    let parsedAppDeadline = null;
+    let parsedStart = null;
+    let parsedEnd = null;
+
+    if (applicationStart) {
+      parsedAppStart = new Date(applicationStart);
+      if (isNaN(parsedAppStart.getTime())) return res.status(400).json({ success: false, error: 'Invalid applicationStart date' });
+    }
+    if (applicationDeadline) {
+      parsedAppDeadline = new Date(applicationDeadline);
+      if (isNaN(parsedAppDeadline.getTime())) return res.status(400).json({ success: false, error: 'Invalid applicationDeadline date' });
+    }
+    if (startDate) {
+      parsedStart = new Date(startDate);
+      if (isNaN(parsedStart.getTime())) return res.status(400).json({ success: false, error: 'Invalid startDate date' });
+    }
+    if (endDate) {
+      parsedEnd = new Date(endDate);
+      if (isNaN(parsedEnd.getTime())) return res.status(400).json({ success: false, error: 'Invalid endDate date' });
+    }
+
+    if (parsedAppStart && parsedAppDeadline && parsedAppDeadline < parsedAppStart) {
+      return res.status(400).json({ success: false, error: 'applicationDeadline cannot be earlier than applicationStart' });
+    }
+    if (parsedStart && parsedEnd && parsedEnd < parsedStart) {
+      return res.status(400).json({ success: false, error: 'endDate cannot be earlier than startDate' });
+    }
+
+    const opportunity = await prisma.opportunity.findUnique({ where: { id: Number(opportunityId) } });
+    if (!opportunity) return res.status(404).json({ success: false, error: 'Opportunity not found' });
+
+    const existingCycle = await prisma.opportunityCycle.findUnique({
+      where: {
+        opportunityId_cycleLabel: {
+          opportunityId: Number(opportunityId),
+          cycleLabel
+        }
+      }
+    });
+
+    if (existingCycle) {
+      return res.status(409).json({ success: false, error: 'Cycle with this label already exists for this opportunity' });
+    }
+
+    const cycle = await prisma.opportunityCycle.create({
+      data: {
+        opportunityId: Number(opportunityId),
+        cycleLabel,
+        applicationStart: parsedAppStart,
+        applicationDeadline: parsedAppDeadline,
+        startDate: parsedStart,
+        endDate: parsedEnd,
+        status: status || 'UNKNOWN',
+        applicationUrl
+      }
+    });
+
+    res.status(201).json({ success: true, data: cycle });
+  } catch (error) {
+    console.error('Create cycle error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+};
+
+export const updateOpportunityCycle = async (req, res) => {
+  try {
+    const { opportunityId, cycleId } = req.params;
+    const { cycleLabel, applicationStart, applicationDeadline, startDate, endDate, status, applicationUrl } = req.body;
+
+    const existing = await prisma.opportunityCycle.findUnique({ where: { id: Number(cycleId) } });
+    if (!existing || existing.opportunityId !== Number(opportunityId)) {
+      return res.status(404).json({ success: false, error: 'Cycle not found for this opportunity' });
+    }
+
+    if (cycleLabel && cycleLabel.trim() === '') {
+      return res.status(400).json({ success: false, error: 'cycleLabel cannot be empty' });
+    }
+
+    const validStatuses = ['UPCOMING', 'OPEN', 'CLOSED', 'CANCELLED', 'UNKNOWN'];
+    if (status && !validStatuses.includes(status)) {
+      return res.status(400).json({ success: false, error: 'Invalid status' });
+    }
+
+    if (applicationUrl && !isValidUrl(applicationUrl)) {
+      return res.status(400).json({ success: false, error: 'Invalid applicationUrl format' });
+    }
+
+    if (cycleLabel && cycleLabel !== existing.cycleLabel) {
+      const dup = await prisma.opportunityCycle.findUnique({
+        where: {
+          opportunityId_cycleLabel: {
+            opportunityId: Number(opportunityId),
+            cycleLabel
+          }
+        }
+      });
+      if (dup) return res.status(409).json({ success: false, error: 'Cycle label already exists' });
+    }
+
+    let parsedAppStart = existing.applicationStart;
+    let parsedAppDeadline = existing.applicationDeadline;
+    let parsedStart = existing.startDate;
+    let parsedEnd = existing.endDate;
+
+    if (applicationStart !== undefined) {
+      if (applicationStart === null) parsedAppStart = null;
+      else {
+        parsedAppStart = new Date(applicationStart);
+        if (isNaN(parsedAppStart.getTime())) return res.status(400).json({ success: false, error: 'Invalid applicationStart date' });
+      }
+    }
+    if (applicationDeadline !== undefined) {
+      if (applicationDeadline === null) parsedAppDeadline = null;
+      else {
+        parsedAppDeadline = new Date(applicationDeadline);
+        if (isNaN(parsedAppDeadline.getTime())) return res.status(400).json({ success: false, error: 'Invalid applicationDeadline date' });
+      }
+    }
+    if (startDate !== undefined) {
+      if (startDate === null) parsedStart = null;
+      else {
+        parsedStart = new Date(startDate);
+        if (isNaN(parsedStart.getTime())) return res.status(400).json({ success: false, error: 'Invalid startDate date' });
+      }
+    }
+    if (endDate !== undefined) {
+      if (endDate === null) parsedEnd = null;
+      else {
+        parsedEnd = new Date(endDate);
+        if (isNaN(parsedEnd.getTime())) return res.status(400).json({ success: false, error: 'Invalid endDate date' });
+      }
+    }
+
+    if (parsedAppStart && parsedAppDeadline && parsedAppDeadline < parsedAppStart) {
+      return res.status(400).json({ success: false, error: 'applicationDeadline cannot be earlier than applicationStart' });
+    }
+    if (parsedStart && parsedEnd && parsedEnd < parsedStart) {
+      return res.status(400).json({ success: false, error: 'endDate cannot be earlier than startDate' });
+    }
+
+    const updated = await prisma.opportunityCycle.update({
+      where: { id: Number(cycleId) },
+      data: {
+        cycleLabel: cycleLabel !== undefined ? cycleLabel : existing.cycleLabel,
+        applicationStart: parsedAppStart,
+        applicationDeadline: parsedAppDeadline,
+        startDate: parsedStart,
+        endDate: parsedEnd,
+        status: status !== undefined ? status : existing.status,
+        applicationUrl: applicationUrl !== undefined ? applicationUrl : existing.applicationUrl
+      }
+    });
+
+    res.status(200).json({ success: true, data: updated });
+  } catch (error) {
+    console.error('Update cycle error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+};
+
+export const deleteOpportunityCycle = async (req, res) => {
+  try {
+    const { opportunityId, cycleId } = req.params;
+
+    const existing = await prisma.opportunityCycle.findUnique({ where: { id: Number(cycleId) } });
+    if (!existing || existing.opportunityId !== Number(opportunityId)) {
+      return res.status(404).json({ success: false, error: 'Cycle not found for this opportunity' });
+    }
+
+    await prisma.opportunityCycle.delete({ where: { id: Number(cycleId) } });
+
+    res.status(200).json({ success: true, data: { message: 'Opportunity cycle deleted successfully' } });
+  } catch (error) {
+    console.error('Delete cycle error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+};
+
+// ================= OPPORTUNITY CYCLE VERIFICATIONS =================
+
+export const getCycleVerifications = async (req, res) => {
+  try {
+    const { opportunityId, cycleId } = req.params;
+
+    const cycle = await prisma.opportunityCycle.findUnique({ where: { id: Number(cycleId) } });
+    if (!cycle || cycle.opportunityId !== Number(opportunityId)) {
+      return res.status(404).json({ success: false, error: 'Cycle not found for this opportunity' });
+    }
+
+    const verifications = await prisma.opportunityCycleVerification.findMany({
+      where: { opportunityCycleId: Number(cycleId) },
+      orderBy: [
+        { verifiedAt: 'desc' },
+        { createdAt: 'desc' }
+      ]
+    });
+
+    res.status(200).json({ success: true, data: verifications });
+  } catch (error) {
+    console.error('Get cycle verifications error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+};
+
+export const addCycleVerification = async (req, res) => {
+  try {
+    const { opportunityId, cycleId } = req.params;
+    const { status, verifiedBy, notes } = req.body;
+
+    if (!verifiedBy) return res.status(400).json({ success: false, error: 'verifiedBy is required' });
+
+    const validStatuses = ['VERIFIED', 'FAILED', 'NEEDS_REVIEW'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ success: false, error: 'Invalid verification status' });
+    }
+
+    const cycle = await prisma.opportunityCycle.findUnique({ where: { id: Number(cycleId) } });
+    if (!cycle || cycle.opportunityId !== Number(opportunityId)) {
+      return res.status(404).json({ success: false, error: 'Cycle not found for this opportunity' });
+    }
+
+    const verification = await prisma.opportunityCycleVerification.create({
+      data: {
+        opportunityCycleId: Number(cycleId),
+        status,
+        verifiedBy,
+        notes
+      }
+    });
+
+    res.status(201).json({ success: true, data: verification });
+  } catch (error) {
+    console.error('Add cycle verification error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+};
+
+export const getLatestCycleVerification = async (req, res) => {
+  try {
+    const { opportunityId, cycleId } = req.params;
+
+    const cycle = await prisma.opportunityCycle.findUnique({ where: { id: Number(cycleId) } });
+    if (!cycle || cycle.opportunityId !== Number(opportunityId)) {
+      return res.status(404).json({ success: false, error: 'Cycle not found for this opportunity' });
+    }
+
+    const verification = await prisma.opportunityCycleVerification.findFirst({
+      where: { opportunityCycleId: Number(cycleId) },
+      orderBy: [
+        { verifiedAt: 'desc' },
+        { createdAt: 'desc' }
+      ]
+    });
+
+    if (!verification) {
+      return res.status(404).json({ success: false, error: 'No verification record found' });
+    }
+
+    res.status(200).json({ success: true, data: verification });
+  } catch (error) {
+    console.error('Get latest cycle verification error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+};
