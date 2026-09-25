@@ -7,8 +7,11 @@ import {
   getSkillEvidence,
   removeSkillEvidence
 } from '../controllers/skill.controller.js';
+import { authenticate, requireOwnership } from '../middleware/auth.middleware.js';
 
 const router = Router();
+
+router.use('/:studentId', authenticate, requireOwnership);
 
 router.get('/:studentId/skills', getStudentSkills);
 router.post('/:studentId/skills', addStudentSkill);

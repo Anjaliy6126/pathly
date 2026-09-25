@@ -8,8 +8,11 @@ import {
   getProjectSkills,
   removeProjectSkill
 } from '../controllers/project.controller.js';
+import { authenticate, requireOwnership } from '../middleware/auth.middleware.js';
 
 const router = Router();
+
+router.use('/:studentId', authenticate, requireOwnership);
 
 router.get('/:studentId/projects', getProjects);
 router.post('/:studentId/projects', createProject);

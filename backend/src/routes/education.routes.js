@@ -5,8 +5,11 @@ import {
   updateEducation,
   deleteEducation
 } from '../controllers/education.controller.js';
+import { authenticate, requireOwnership } from '../middleware/auth.middleware.js';
 
 const router = Router();
+
+router.use('/:studentId', authenticate, requireOwnership);
 
 router.get('/:studentId/education', getEducation);
 router.post('/:studentId/education', createEducation);
