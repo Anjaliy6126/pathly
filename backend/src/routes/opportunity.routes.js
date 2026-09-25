@@ -1,0 +1,39 @@
+import { Router } from 'express';
+import {
+  getOpportunities,
+  getOpportunity,
+  createOpportunity,
+  updateOpportunity,
+  deactivateOpportunity,
+  getOpportunitySkills,
+  addOpportunitySkill,
+  updateOpportunitySkill,
+  removeOpportunitySkill,
+  getEligibilityRequirements,
+  addEligibilityRequirement,
+  updateEligibilityRequirement,
+  deleteEligibilityRequirement
+} from '../controllers/opportunity.controller.js';
+
+const router = Router();
+
+// --- Opportunity Core ---
+router.get('/', getOpportunities);
+router.post('/', createOpportunity);
+router.get('/:opportunityId', getOpportunity);
+router.patch('/:opportunityId', updateOpportunity);
+router.patch('/:opportunityId/status', deactivateOpportunity);
+
+// --- Opportunity Skills ---
+router.get('/:opportunityId/skills', getOpportunitySkills);
+router.post('/:opportunityId/skills', addOpportunitySkill);
+router.patch('/:opportunityId/skills/:opportunitySkillId', updateOpportunitySkill);
+router.delete('/:opportunityId/skills/:opportunitySkillId', removeOpportunitySkill);
+
+// --- Opportunity Eligibility ---
+router.get('/:opportunityId/eligibility', getEligibilityRequirements);
+router.post('/:opportunityId/eligibility', addEligibilityRequirement);
+router.patch('/:opportunityId/eligibility/:eligibilityId', updateEligibilityRequirement);
+router.delete('/:opportunityId/eligibility/:eligibilityId', deleteEligibilityRequirement);
+
+export default router;
