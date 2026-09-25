@@ -5,6 +5,7 @@ import { env } from "./config/env.js";
 import healthRoutes from "./routes/health.routes.js";
 import matchingRoutes from "./routes/matching.routes.js";
 import studentRoutes from "./routes/student.routes.js";
+import skillRoutes from "./routes/skill.routes.js";
 
 const app = express();
 
@@ -14,6 +15,7 @@ app.use(express.json());
 app.use("/api/health", healthRoutes);
 app.use("/api/matching", matchingRoutes);
 app.use("/api/students", studentRoutes);
+app.use("/api/students", skillRoutes);
 
 app.get("/", (req, res) => {
   res.json({ message: "Pathly API is running" });
